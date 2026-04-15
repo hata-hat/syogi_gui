@@ -157,7 +157,7 @@ class ShogiGUI:
         fx, fy = self.selected
         legal = get_legal_moves(self.board, self.hands, fx, fy, self.turn)
 
-        candidates = [a for a in legal if a["to"] == (x, y)]
+        candidates = [a for a in legal if a[2] == (x, y)]
 
         if not candidates:
             self.clear_selection()
@@ -166,7 +166,7 @@ class ShogiGUI:
         # 成り選択
         if len(candidates) == 2:
             ans = messagebox.askyesno("成り", "成りますか？")
-            action = candidates[0] if candidates[0].get("promote") == ans else candidates[1]
+            action = candidates[0] if candidates[0][3] == ans else candidates[1]
         else:
             action = candidates[0]
 
@@ -245,6 +245,9 @@ PROMOTE_MAP = {
 
 UNPROMOTE_MAP = {v: k for k, v in PROMOTE_MAP.items()}
 
+def action_key(a):
+    return (a[0], a[1], a[2], a[3])
+
 def can_drop(board, hands, piece, x, y, turn):
     if board[x][y] != EMPTY:
         return False
@@ -281,23 +284,19 @@ def can_promote(piece, fx, tx, turn):
     )
 
 def drop_piece(board, hands, piece, x, y, turn):
-    if not can_drop(board, hands, piece, x, y, turn):
-        return False
+    action = ("drop", piece, (x, y), None)
 
-    action = {"type": "drop", "piece": piece, "to": (x, y)}
     nb, nh = simulate(board, hands, action, turn)
 
-    # 自分が王手になる手は禁止
+    if nb is None:
+        return False
+
     if is_check(nb, turn):
         return False
 
-    # 打ち歩詰め禁止
-    if piece == "p":
-        if is_checkmate(nb, nh, not turn):
-            return False
-
-    board[x][y] = piece if turn else piece.upper()
-    hands[turn].remove(piece)
+    board[:] = [row[:] for row in nb]
+    hands[True] = nh[True]
+    hands[False] = nh[False]
 
     return True
 
@@ -311,44 +310,25 @@ def find_king(board, turn):
     return None
 
 def get_legal_moves(board, hands, x, y, turn):
-    legal = []
-
     piece = board[x][y]
     if piece == EMPTY or owner(piece) != turn:
         return []
 
+    legal = []
+
     for tx, ty in get_moves(board, x, y, turn):
 
-        # 強制成り
-        if must_promote(piece, tx, turn):
-            actions = [{
-                "type": "move",
-                "from": (x, y),
-                "to": (tx, ty),
-                "promote": True
-            }]
-        else:
-            actions = [{
-                "type": "move",
-                "from": (x, y),
-                "to": (tx, ty),
-                "promote": False
-            }]
+        base = ("move", (x, y), (tx, ty), False)
 
-            # 成れるなら追加
-            if can_promote(piece, x, tx, turn):
-                actions.append({
-                    "type": "move",
-                    "from": (x, y),
-                    "to": (tx, ty),
-                    "promote": True
-                })
+        actions = [base]
 
-        # シミュレーションチェック
-        for action in actions:
-            nb, nh = simulate(board, hands, action, turn)
-            if not is_check(nb, turn):
-                legal.append(action)
+        if can_promote(piece, x, tx, turn):
+            actions.append(("move", (x, y), (tx, ty), True))
+
+        for a in actions:
+            nb, nh = simulate(board, hands, a, turn)
+            if nb and not is_check(nb, turn):
+                legal.append(a)
 
     return legal
 
@@ -357,21 +337,22 @@ def get_moves(board, x, y, turn):
     p = piece.lower()
     moves = []
 
+    owner_turn = owner(piece)
+    forward = -1 if turn else 1
+
     def add(dx, dy, repeat=False):
-        nx, ny = x+dx, y+dy
+        nx, ny = x + dx, y + dy
         while is_inside(nx, ny):
             if board[nx][ny] == EMPTY:
                 moves.append((nx, ny))
             else:
-                if is_enemy(board[nx][ny], turn):
+                if is_enemy(board[nx][ny], owner_turn):
                     moves.append((nx, ny))
                 break
             if not repeat:
                 break
             nx += dx
             ny += dy
-
-    forward = -1 if turn else 1
 
     if p == "p":
         add(forward, 0)
@@ -380,46 +361,46 @@ def get_moves(board, x, y, turn):
         add(forward, 0, True)
 
     elif p == "n":
-        for dy in [-1,1]:
-            nx, ny = x + 2*forward, y+dy
+        for dy in [-1, 1]:
+            nx, ny = x + 2 * forward, y + dy
             if is_inside(nx, ny):
                 moves.append((nx, ny))
 
     elif p == "s":
         dirs = [(forward,0),(forward,-1),(forward,1),(-forward,-1),(-forward,1)]
-        for dx,dy in dirs:
-            add(dx,dy)
+        for dx, dy in dirs:
+            add(dx, dy)
 
-    elif p == "g" or p in ["+p","+l","+n","+s"]:
+    elif p in ["g", "+p", "+l", "+n", "+s"]:
         dirs = [(forward,0),(0,-1),(0,1),(-forward,0),(forward,-1),(forward,1)]
-        for dx,dy in dirs:
-            add(dx,dy)
+        for dx, dy in dirs:
+            add(dx, dy)
 
     elif p == "k":
         for dx in [-1,0,1]:
             for dy in [-1,0,1]:
                 if dx or dy:
-                    add(dx,dy)
+                    add(dx, dy)
 
     elif p == "b":
-        for dx,dy in [(-1,-1),(-1,1),(1,-1),(1,1)]:
-            add(dx,dy,True)
+        for dx, dy in [(-1,-1),(-1,1),(1,-1),(1,1)]:
+            add(dx, dy, True)
 
     elif p == "r":
-        for dx,dy in [(-1,0),(1,0),(0,-1),(0,1)]:
-            add(dx,dy,True)
+        for dx, dy in [(-1,0),(1,0),(0,-1),(0,1)]:
+            add(dx, dy, True)
 
     elif p == "+b":
-        for dx,dy in [(-1,-1),(-1,1),(1,-1),(1,1)]:
-            add(dx,dy,True)
-        for dx,dy in [(-1,0),(1,0),(0,-1),(0,1)]:
-            add(dx,dy)
+        for dx, dy in [(-1,-1),(-1,1),(1,-1),(1,1)]:
+            add(dx, dy, True)
+        for dx, dy in [(-1,0),(1,0),(0,-1),(0,1)]:
+            add(dx, dy)
 
     elif p == "+r":
-        for dx,dy in [(-1,0),(1,0),(0,-1),(0,1)]:
-            add(dx,dy,True)
-        for dx,dy in [(-1,-1),(-1,1),(1,-1),(1,1)]:
-            add(dx,dy)
+        for dx, dy in [(-1,0),(1,0),(0,-1),(0,1)]:
+            add(dx, dy, True)
+        for dx, dy in [(-1,-1),(-1,1),(1,-1),(1,1)]:
+            add(dx, dy)
 
     return moves
 
@@ -449,19 +430,19 @@ def in_promotion_zone(x, turn):
 
 #王手判定
 def is_check(board, turn):
-    king = "k" if turn else "K"
-
-    kx, ky = find_king(board, turn)
-    if kx is None:
+    pos = find_king(board, turn)
+    if pos is None:
         return True
+
+    kx, ky = pos
 
     for x in range(9):
         for y in range(9):
             piece = board[x][y]
             if piece != EMPTY and owner(piece) != turn:
-                moves = get_moves(board, x, y, not turn)
-                if (kx, ky) in moves:
-                    return True
+                for mx, my in get_moves(board, x, y, owner(piece)):
+                    if (mx, my) == (kx, ky):
+                        return True
 
     return False
 
@@ -485,7 +466,7 @@ def is_checkmate(board, hands, turn):
         for x in range(9):
             for y in range(9):
                 if board[x][y] == EMPTY:
-                    action = {"type": "drop", "piece": piece, "to": (x, y)}
+                    action = ("drop", piece, (x, y), None)
                     nb, _ = simulate(board, hands, action, turn)
                     if not is_check(nb, turn):
                         return False
@@ -512,36 +493,18 @@ def is_nifu(board, y, turn):
     return False
 
 def move_piece(board, hands, action, turn):
-    fx, fy = action["from"]
-    tx, ty = action["to"]
-    promote = action.get("promote", False)
-
-    piece = board[fx][fy]
-
-    if piece == EMPTY or owner(piece) != turn:
-        return False
-
-    legal_moves = get_legal_moves(board, hands, fx, fy, turn)
-    if action not in legal_moves:
-        return False
-
-    # simulateで最終チェック
     nb, nh = simulate(board, hands, action, turn)
+
+    if nb is None:
+        return False
+
     if is_check(nb, turn):
         return False
 
-    # 実行
-    target = board[tx][ty]
-    if target != EMPTY:
-        hands[turn].append(target.lower().replace("+", ""))
-
-    board[fx][fy] = EMPTY
-
-    if promote:
-        promoted = PROMOTE_MAP[piece.lower()]
-        board[tx][ty] = promoted if turn else promoted.upper()
-    else:
-        board[tx][ty] = piece
+    # ★ここが核心（state更新は1回だけ）
+    board[:] = [row[:] for row in nb]
+    hands[True] = nh[True]
+    hands[False] = nh[False]
 
     return True
 
@@ -562,7 +525,7 @@ def must_promote(piece, tx, turn):
 def owner(piece):
     if piece == EMPTY:
         return None
-    return piece.islower()
+    return piece.islower()  # True=先手, False=後手
 
 def print_board(board, hands):
     print("   0 1 2 3 4 5 6 7 8")
@@ -581,38 +544,53 @@ def promote_if_possible(piece, x, turn):
     return piece
 
 def simulate(board, hands, action, turn):
-    new_board = copy.deepcopy(board)
-    new_hands = copy.deepcopy(hands)
+    import copy
 
-    if action["type"] == "move":
-        fx, fy = action["from"]
-        tx, ty = action["to"]
-        promote = action.get("promote", False)
+    nb = [row[:] for row in board]
+    nh = {True: hands[True][:], False: hands[False][:]}
 
-        piece = new_board[fx][fy]
-        target = new_board[tx][ty]
+    kind = action[0]
 
-        # 取った駒
+    # =====================
+    # move
+    # =====================
+    if kind == "move":
+        fx, fy = action[1]
+        tx, ty = action[2]
+        promote = action[3]
+
+        piece = nb[fx][fy]
+        target = nb[tx][ty]
+
+        if piece == EMPTY:
+            return None, None
+
+        # 取る
         if target != EMPTY:
-            new_hands[turn].append(target.lower().replace("+", ""))
+            nh[turn].append(target.lower().replace("+", ""))
 
-        new_board[fx][fy] = EMPTY
+        nb[fx][fy] = EMPTY
 
-        # 成り処理
         if promote:
-            promoted = PROMOTE_MAP[piece.lower()]
-            piece = promoted if turn else promoted.upper()
+            piece = PROMOTE_MAP[piece.lower()]
+            piece = piece if turn else piece.upper()
 
-        new_board[tx][ty] = piece
+        nb[tx][ty] = piece
 
-    elif action["type"] == "drop":
-        x, y = action["to"]
-        piece = action["piece"]
+    # =====================
+    # drop
+    # =====================
+    elif kind == "drop":
+        piece = action[1]
+        x, y = action[2]
 
-        new_board[x][y] = piece if turn else piece.upper()
-        new_hands[turn].remove(piece)
+        if nb[x][y] != EMPTY:
+            return None, None
 
-    return new_board, new_hands
+        nb[x][y] = piece if turn else piece.upper()
+        nh[turn].remove(piece)
+
+    return nb, nh
 
 def main():
     board = init_board()
@@ -638,8 +616,8 @@ def main():
             # 一覧表示
             print("選べる手:")
             for i, act in enumerate(legal_actions):
-                tx, ty = act["to"]
-                p = "成" if act.get("promote", False) else "不成"
+                tx, ty = act[2]
+                p = "成" if act[3] else "不成"
                 print(f"{i}: ({tx},{ty}) {p}")
 
             idx = int(input("番号を選択: "))
