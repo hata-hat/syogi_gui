@@ -3,6 +3,8 @@ import tkinter as tk
 from tkinter import messagebox
 from collections import Counter
 
+
+
 # =====================
 # 定数・表示関連
 # =====================
@@ -32,9 +34,17 @@ PIECE_DISPLAY = {
 
 CELL_SIZE = 50
 
+#成り駒対応表
+PROMOTE_MAP = {
+    "p": "+p", "l": "+l", "n": "+n", "s": "+s",
+    "b": "+b", "r": "+r"
+}
+#成り解除対応表
+UNPROMOTE_MAP = {v: k for k, v in PROMOTE_MAP.items()}
 
 class ShogiGUI:
 
+    #GUI初期化
     def __init__(self, root):
         self.root = root
         self.root.title("将棋")
@@ -42,6 +52,8 @@ class ShogiGUI:
         self.board = init_board()
         self.hands = {True: [], False: []}
         self.turn = True
+
+        self.history = [] 
 
         self.selected = None
         self.selected_hand = None
@@ -79,8 +91,24 @@ class ShogiGUI:
 
         # 初期描画
         self.update_board()
-        self.update_hands()    
+        self.update_hands()  
 
+        self.control_frame = tk.Frame(root)
+        self.control_frame.pack(pady=10)
+
+        tk.Button(
+            self.control_frame,
+            text="新規対局",
+            command=self.reset_game
+        ).pack() 
+
+        tk.Button(
+            self.control_frame,
+            text="待った（UNDO）",
+            command=self.undo_move
+        ).pack() 
+
+    #持ち駒表示を更新
     def update_hands(self):
         # =====================
         # クリア
@@ -140,6 +168,7 @@ class ShogiGUI:
             btn.pack(side=tk.LEFT)
             self.hand_buttons_bottom.append(btn)
 
+    #盤面ボタンの表示を更新
     def update_board(self):
         for x in range(9):
             for y in range(9):
@@ -160,7 +189,7 @@ class ShogiGUI:
                 if btn.piece == piece:
                     btn["bg"] = "yellow"
 
-    # 盤クリック時の分岐制御
+    # 盤クリック時の処理分岐
     def on_click(self, x, y):
         """
         クリック時の分岐制御だけ行う
@@ -174,6 +203,12 @@ class ShogiGUI:
 
     # 持ち駒を打つ処理
     def handle_drop(self, x, y):
+        self.history.append((
+                copy.deepcopy(self.board),
+                copy.deepcopy(self.hands),
+                self.turn
+            ))
+        
         success = drop_piece(
             self.board, self.hands,
             self.selected_hand, x, y, self.turn
@@ -195,7 +230,7 @@ class ShogiGUI:
         self.update_board()
         self.update_hands()
 
-    # 駒の選択
+    # 駒の選択処理
     def handle_select(self, x, y):
         piece = self.board[x][y]
 
@@ -214,6 +249,12 @@ class ShogiGUI:
             self.clear_selection()
             return
 
+        self.history.append((
+                copy.deepcopy(self.board),
+                copy.deepcopy(self.hands),
+                self.turn
+            ))
+        
         # 成り選択
         if len(candidates) == 2:
             ans = messagebox.askyesno("成り", "成りますか？")
@@ -249,11 +290,11 @@ class ShogiGUI:
         self.update_board()
         self.update_hands()
 
-    # 盤面選択、持ち駒選択のハイライトを全解除
+    # 選択状態とハイライトを解除
     def clear_selection(self):
         if self.selected:
             x, y = self.selected
-            self.buttons[x][y]["bg"] = "SystemButtonFace"
+            self.buttons[x][y].configure(bg="SystemButtonFace")
 
         for btn in self.hand_buttons_top:
             btn["bg"] = "SystemButtonFace"
@@ -263,23 +304,39 @@ class ShogiGUI:
 
         self.selected = None
         self.selected_hand = None
+    
+    #待った用
+    def undo_move(self):
+        if not self.history:
+            return
 
-def run_gui():
-    root = tk.Tk()
-    app = ShogiGUI(root)
-    root.mainloop()
+        self.board, self.hands, self.turn = self.history.pop()
 
-PROMOTE_MAP = {
-    "p": "+p", "l": "+l", "n": "+n", "s": "+s",
-    "b": "+b", "r": "+r"
-}
+        self.clear_selection()
+        self.update_board()
+        self.update_hands()
+            
+    #初期化
+    def reset_game(self):
+        if not messagebox.askyesno("確認", "新しい対局を開始しますか？"):
+            return
 
-UNPROMOTE_MAP = {v: k for k, v in PROMOTE_MAP.items()}
+        self.board = init_board()
+        self.hands = {True: [], False: []}
+        self.turn = True
 
+        self.clear_selection()
+        self.history.clear()
+
+        self.update_board()
+        self.update_hands()
+
+
+#将来的な手の比較、ソート用
 def action_key(a):
     return (a[0], a[1], a[2], a[3])
 
-# 持ち駒を打てるか判定
+# 駒打ちがルール上可能か判定
 def can_drop(board, hands, piece, x, y, turn):
     if board[x][y] != EMPTY:
         return False
@@ -356,7 +413,7 @@ def drop_piece(board, hands, piece, x, y, turn):
 
     return True
 
-# 王の位置検索
+# 指定側の王の位置取得
 def find_king(board, turn):
     king = "k" if turn else "K"
     for x in range(9):
@@ -365,7 +422,7 @@ def find_king(board, turn):
                 return x, y
     return None
 
-# 指定マスの駒の合法手をすべて返す
+# 指定駒の合法手をすべて生成
 def get_legal_moves(board, hands, x, y, turn):
     piece = board[x][y]
     if not is_friend(piece, turn):
@@ -402,7 +459,7 @@ def get_legal_moves(board, hands, x, y, turn):
 
     return legal    # [("move", fx, fy, tx, ty, promote_flag), ...]
 
-# 駒の「移動可能マス」を生成
+# 駒の移動可能マスを生成
 def get_moves(board, x, y, owner_turn):
     """
     ※以下は考慮しない
@@ -417,7 +474,7 @@ def get_moves(board, x, y, owner_turn):
     owner_turn = owner_turn 
     forward = -1 if owner_turn else 1
 
-    def add(dx, dy, repeat=False):
+    def add_move(dx, dy, repeat=False):
         nx, ny = x + dx, y + dy
         while is_inside(nx, ny):
             if board[nx][ny] == EMPTY:
@@ -432,10 +489,10 @@ def get_moves(board, x, y, owner_turn):
             ny += dy
 
     if p == "p":
-        add(forward, 0)
+        add_move(forward, 0)
 
     elif p == "l":
-        add(forward, 0, True)
+        add_move(forward, 0, True)
 
     elif p == "n":
         for dy in [-1, 1]:
@@ -446,38 +503,38 @@ def get_moves(board, x, y, owner_turn):
     elif p == "s":
         dirs = [(forward,0),(forward,-1),(forward,1),(-forward,-1),(-forward,1)]
         for dx, dy in dirs:
-            add(dx, dy)
+            add_move(dx, dy)
 
     elif p in ["g", "+p", "+l", "+n", "+s"]:
         dirs = [(forward,0),(0,-1),(0,1),(-forward,0),(forward,-1),(forward,1)]
         for dx, dy in dirs:
-            add(dx, dy)
+            add_move(dx, dy)
 
     elif p == "k":
         for dx in [-1,0,1]:
             for dy in [-1,0,1]:
                 if dx or dy:
-                    add(dx, dy)
+                    add_move(dx, dy)
 
     elif p == "b":
         for dx, dy in [(-1,-1),(-1,1),(1,-1),(1,1)]:
-            add(dx, dy, True)
+            add_move(dx, dy, True)
 
     elif p == "r":
         for dx, dy in [(-1,0),(1,0),(0,-1),(0,1)]:
-            add(dx, dy, True)
+            add_move(dx, dy, True)
 
     elif p == "+b":
         for dx, dy in [(-1,-1),(-1,1),(1,-1),(1,1)]:
-            add(dx, dy, True)
+            add_move(dx, dy, True)
         for dx, dy in [(-1,0),(1,0),(0,-1),(0,1)]:
-            add(dx, dy)
+            add_move(dx, dy)
 
     elif p == "+r":
         for dx, dy in [(-1,0),(1,0),(0,-1),(0,1)]:
-            add(dx, dy, True)
+            add_move(dx, dy, True)
         for dx, dy in [(-1,-1),(-1,1),(1,-1),(1,1)]:
-            add(dx, dy)
+            add_move(dx, dy)
 
     return moves
 
@@ -505,7 +562,7 @@ def init_board():
 def in_promo_zone(x, turn):
     return (turn and x <= 2) or ((not turn) and x >= 6)
 
-# 王手判定
+# 指定側が王手されているか判定
 def is_check(board, turn):
     """
     指定側の玉が王手されているか判定
@@ -571,20 +628,19 @@ def is_checkmate(board, hands, turn):
 
     return True
 
+# 相手の駒か判定
 def is_enemy(piece, turn):
     return piece != EMPTY and owner(piece) != turn
 
+# 自分の駒か判定
 def is_friend(piece, turn):
     return piece != EMPTY and owner(piece) == turn
 
+# 盤面座標か判定
 def is_inside(x,y):
     return 0 <= x < 9 and 0 <= y < 9
 
-def is_king_alive(board, turn):
-    king = "k" if turn else "K"
-    return any(king in row for row in board)
-
-#二歩
+# 二歩
 def is_nifu(board, y, turn):
     pawn = "p" if turn else "P"
     for x in range(9):
@@ -622,27 +678,31 @@ def must_promote(piece, tx, turn):
 
     return False
 
+# 駒の所有者を返す
 def owner(piece):
     if piece == EMPTY:
         return None
     return piece.islower()  # True=先手, False=後手
 
+# cui用の盤面表示
 def print_board(board, hands):
-    print("   0 1 2 3 4 5 6 7 8")
+    # ヘッダー（列番号）
+    print(" | " + "".join(f"{i:>3} " for i in range(1,10)))
+    print(" +" + "ーー"*9)
+
     for i, row in enumerate(board):
-        print(i, " ".join(row))
+        row_label = chr(ord('a') + i)
+        line = []
+        for piece in row:
+            text = display_piece(piece)
+            line.append(f"{text:>3}")
+        print(f"{row_label}|"+ "".join(line))
+
+    print(" +" + "ーー"*9)
     print("先手持ち駒:", hands[True])
     print("後手持ち駒:", hands[False])
     print()
-
-def promote_if_possible(piece, x, turn):
-    if piece.lower() not in PROMOTE_MAP:
-        return piece
-
-    if (turn and x <= 2) or ((not turn) and x >= 6):
-        return PROMOTE_MAP[piece.lower()]
-    return piece
-
+    
 # 一手仮適用して、新しい盤面と持ち駒を返す
 def simulate(board, hands, action, turn):
     nb = [row[:] for row in board]
@@ -660,7 +720,9 @@ def simulate(board, hands, action, turn):
             return None, None
 
         if target != EMPTY:
-            nh[turn].append(target.lower().replace("+", ""))
+            base = target.lower()
+            base = UNPROMOTE_MAP.get(base, base) 
+            nh[turn].append(base)          
 
         nb[fx][fy] = EMPTY
 
@@ -682,6 +744,39 @@ def simulate(board, hands, action, turn):
 
     return nb, nh   # (new_board, new_hands)または(None, None)(不正時)
 
+#座標変換
+def parse_pos(pos):
+    """
+    '6a' → (x, y) に変換
+    """
+    col = int(pos[0]) - 1          # 1-9 → 0-8
+    row = ord(pos[1].lower()) - ord('a')  # a-i → 0-8
+    return row, col
+
+#表示の逆変換
+def format_pos(x, y):
+    """
+    (x, y) → '6a'
+    """
+    return f"{y+1}{chr(ord('a') + x)}"
+
+#座標入力の分割
+def input_pos():
+    col = input("列 (1-9): ")
+    row = input("行 (a-i): ").lower()
+    
+
+    if row < 'a' or row > 'i':
+        return None
+
+    if not col.isdigit() or not (1 <= int(col) <= 9):
+        return None
+
+    x = ord(row) - ord('a')
+    y = int(col) - 1
+    return x, y
+
+#cuiモード
 def main():
     board = init_board()
     hands = {True: [], False: []}
@@ -693,22 +788,25 @@ def main():
         mode = input("move or drop? ")
 
         if mode == "move":
-            fx = int(input("from x: "))
-            fy = int(input("from y: "))
+            print("移動元を選択")
+            pos = input_pos()
+            if pos is None:
+                print("入力エラー")
+                continue
 
-            # 合法手を取得
+            fx, fy = pos
+
             legal_actions = get_legal_moves(board, hands, fx, fy, turn)
 
             if not legal_actions:
                 print("合法手がありません")
                 continue
 
-            # 一覧表示
-            print("選べる手:")
+            print("移動可能なマス:")
             for i, act in enumerate(legal_actions):
                 _, fx, fy, tx, ty, promote = act
                 p = "成" if promote else "不成"
-                print(f"{i}: ({tx},{ty}) {p}")
+                print(f"{i}: {format_pos(tx, ty)} {p}")
 
             idx = int(input("番号を選択: "))
             if idx < 0 or idx >= len(legal_actions):
@@ -717,11 +815,17 @@ def main():
 
             action = legal_actions[idx]
             success = move_piece(board, hands, action, turn)
-
+            
         elif mode == "drop":
             piece = input("駒(p,l,n,s,g,b,r): ")
-            x = int(input("x: "))
-            y = int(input("y: "))
+
+            print("打つ位置を選択")
+            pos = input_pos()
+            if pos is None:
+                print("入力エラー")
+                continue
+
+            x, y = pos
 
             success = drop_piece(board, hands, piece, x, y, turn)
 
@@ -739,6 +843,12 @@ def main():
                 print("王手！")
 
             turn = not turn
+
+#guiモード
+def run_gui():
+    root = tk.Tk()
+    app = ShogiGUI(root)
+    root.mainloop()
 
 if __name__ == "__main__":
     mode = input("cui or gui? ")
